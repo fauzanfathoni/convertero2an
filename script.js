@@ -1,29 +1,11 @@
-// script.js
-
 const uploadArea = document.getElementById('upload-area');
 const fileInput = document.getElementById('file-input');
 const uploadText = document.getElementById('upload-text');
 const convertBtn = document.querySelector('.convert-btn');
 const previewContainer = document.getElementById('preview-table');
-const conversionSelect = document.getElementById('conversion-type');
-const headerTitle = document.querySelector('h1');
 
 let selectedFile = null;
 let parsedData = null;
-let currentMode = "KML to CSV";
-
-conversionSelect.addEventListener('change', () => {
-  currentMode = conversionSelect.value;
-  headerTitle.textContent = `${currentMode} Converter`;
-  resetUI();
-});
-
-function resetUI() {
-  selectedFile = null;
-  parsedData = null;
-  uploadText.innerHTML = "<br>*Drop or upload your file here*";
-  previewContainer.innerHTML = "";
-}
 
 uploadArea.addEventListener('click', () => fileInput.click());
 uploadArea.addEventListener('dragover', (e) => {
@@ -44,44 +26,67 @@ fileInput.addEventListener('change', () => {
 
 function handleFile(file) {
   if (!file) return;
+  if (!file.name.endsWith('.kml') && !file.name.endsWith('.kmz')) {
+    return alert("Please upload a .kml or .kmz file.");
+  }
 
-  if (currentMode === "KML to CSV") {
-    if (!file.name.endsWith('.kml') && !file.name.endsWith('.kmz')) {
-      return alert("Please upload a .kml or .kmz file.");
-    }
-    selectedFile = file;
-    uploadText.innerHTML = `<strong>Convert :</strong> ${file.name}`;
-    if (file.name.endsWith('.kmz')) {
-      JSZip.loadAsync(file).then(zip => {
-        const kmlFile = Object.values(zip.files).find(f => f.name.endsWith('.kml'));
-        if (kmlFile) return kmlFile.async('text');
-        else alert('KML not found in KMZ.');
-      }).then(kmlText => {
-        if (kmlText) parseKML(kmlText);
-      });
-    } else {
-      file.text().then(kmlText => parseKML(kmlText));
-    }
-  } else if (currentMode === "DWG to DGN" || currentMode === "DWG to DXF") {
-    if (!file.name.endsWith('.dwg')) {
-      return alert("Please upload a .dwg file.");
-    }
-    selectedFile = file;
-    uploadText.innerHTML = `<strong>Convert DWG:</strong> ${file.name}`;
-    previewContainer.innerHTML = `<p style='color:black'>Ready to convert ${currentMode}.</p>`;
+  selectedFile = file;
+  uploadText.innerHTML = `<strong>Convert :</strong> ${file.name}`;
+
+  if (file.name.endsWith('.kmz')) {
+    JSZip.loadAsync(file).then(async zip => {
+      const kmlFiles = Object.values(zip.files).filter(f => f.name.endsWith('.kml'));
+      if (kmlFiles.length === 0) return alert("No KML file found inside KMZ.");
+
+      let allKmlTexts = [];
+
+      for (const kmlFile of kmlFiles) {
+        try {
+          const kmlText = await kmlFile.async("text");
+          const parser = new DOMParser();
+          const xml = parser.parseFromString(kmlText, "text/xml");
+          const placemarks = xml.getElementsByTagNameNS("*", "Placemark");
+          if (placemarks.length > 0) {
+            allKmlTexts.push(kmlText);
+          }
+        } catch (e) {
+          console.warn(`Failed to read ${kmlFile.name}`, e);
+        }
+      }
+
+      if (allKmlTexts.length === 0) {
+        alert("No Placemark data found in any KML file inside this KMZ.");
+        return;
+      }
+
+      const combined = `<kml><Document>${allKmlTexts.map(k => {
+        const xml = new DOMParser().parseFromString(k, "text/xml");
+        const placemarks = xml.getElementsByTagNameNS("*", "Placemark");
+        return Array.from(placemarks).map(p => p.outerHTML).join("");
+      }).join("")}</Document></kml>`;
+
+      parseKML(combined);
+    });
+  } else {
+    file.text().then(kmlText => parseKML(kmlText));
   }
 }
 
 function parseKML(kmlText) {
   const parser = new DOMParser();
   const xml = parser.parseFromString(kmlText, "text/xml");
-  const placemarks = xml.getElementsByTagNameNS("http://www.opengis.net/kml/2.2", "Placemark");
+  const placemarks = xml.getElementsByTagNameNS("*", "Placemark");
+  if (placemarks.length === 0) {
+    alert("No Placemark found in this KML.");
+    return;
+  }
+
   let rows = [];
   let headersSet = new Set();
   let fatToPoleMap = new Map();
 
   for (let placemark of placemarks) {
-    const simpleDataElems = placemark.getElementsByTagNameNS("http://www.opengis.net/kml/2.2", "SimpleData");
+    const simpleDataElems = placemark.getElementsByTagNameNS("*", "SimpleData");
     let fatId = '', poleId = '';
     for (let el of simpleDataElems) {
       const key = el.getAttribute("name");
@@ -93,8 +98,15 @@ function parseKML(kmlText) {
   }
 
   for (let placemark of placemarks) {
-    const coordText = placemark.getElementsByTagNameNS("http://www.opengis.net/kml/2.2", "coordinates")[0]?.textContent.trim() || '';
-    const [lonRaw, latRaw] = coordText.split(',').map(v => v.trim());
+    let coordText =
+      placemark.getElementsByTagNameNS("http://www.opengis.net/kml/2.2", "coordinates")[0]?.textContent.trim();
+
+    if (!coordText) {
+      const gxCoord = placemark.getElementsByTagNameNS("http://www.google.com/kml/ext/2.2", "coord")[0];
+      if (gxCoord) coordText = gxCoord.textContent.trim().replace(/\s+/g, ' ');
+    }
+
+    const [lonRaw, latRaw] = coordText ? coordText.split(/[ ,]+/).map(v => v.trim()) : ['', ''];
     const lat = latRaw ? parseFloat(latRaw).toFixed(6) : '';
     const lon = lonRaw ? parseFloat(lonRaw).toFixed(6) : '';
 
@@ -102,7 +114,7 @@ function parseKML(kmlText) {
     rowData.Latitude = lat;
     rowData.Longitude = lon;
 
-    const simpleDataElems = placemark.getElementsByTagNameNS("http://www.opengis.net/kml/2.2", "SimpleData");
+    const simpleDataElems = placemark.getElementsByTagNameNS("*", "SimpleData");
     for (let el of simpleDataElems) {
       const key = el.getAttribute("name");
       if (["HPTAR_ID", "OBJECTID", "Shape_Length", "Shape_Area"].includes(key)) continue;
@@ -111,7 +123,7 @@ function parseKML(kmlText) {
       headersSet.add(key);
     }
 
-    const descriptionNode = placemark.getElementsByTagNameNS("http://www.opengis.net/kml/2.2", "description")[0];
+    const descriptionNode = placemark.getElementsByTagNameNS("*", "description")[0];
     if (descriptionNode && descriptionNode.textContent.includes('<td>')) {
       const descDoc = new DOMParser().parseFromString(descriptionNode.textContent, 'text/html');
       const tds = descDoc.querySelectorAll('td');
@@ -132,9 +144,10 @@ function parseKML(kmlText) {
     rows.push(rowData);
   }
 
-  let headers = Array.from(headersSet).filter(h => h !== "POLE_FAT"); // hapus semua POLE_FAT dulu
+  let headers = Array.from(headersSet).filter(h => h !== "POLE_FAT");
   const fatIdx = headers.indexOf("FAT_CODE");
-  if (fatIdx !== -1) headers.splice(fatIdx + 1, 0, "POLE_FAT"); // sisipkan hanya sekali setelah FAT_CODE
+  if (fatIdx !== -1) headers.splice(fatIdx + 1, 0, "POLE_FAT");
+
   const catIdx = headers.indexOf("Category_BizPass");
   if (catIdx !== -1) headers.splice(catIdx + 1, 0, "HOME/BIZ");
   else headers.push("HOME/BIZ");
@@ -163,39 +176,26 @@ function showCSVPreview(headers, rows) {
 
 convertBtn.addEventListener('click', () => {
   if (!selectedFile) return alert("Please upload a file first.");
+  if (!parsedData) return alert('No data to convert.');
 
-  if (currentMode === "KML to CSV") {
-    if (!parsedData) return alert('No data to convert.');
-    const { headers, rows } = parsedData;
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(r => headers.map(h => {
-        let val = r[h] || '';
-        if (!isNaN(val) && val.includes('.')) {
-          const num = parseFloat(val);
-          if (!isNaN(num)) val = num.toFixed(6);
-        }
-        return `"${val.replace(/"/g, '""')}"`;
-      }).join(','))
-    ].join('\n');
+  const { headers, rows } = parsedData;
+  const csvContent = [
+    headers.join(','),
+    ...rows.map(r => headers.map(h => {
+      let val = r[h] || '';
+      if (!isNaN(val) && val.includes('.')) {
+        const num = parseFloat(val);
+        if (!isNaN(num)) val = num.toFixed(6);
+      }
+      return `"${val.replace(/"/g, '""')}"`;
+    }).join(','))
+  ].join('\n');
 
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${selectedFile.name.replace(/\.[^/.]+$/, '')}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  if (currentMode === "DWG to DGN" || currentMode === "DWG to DXF") {
-    const ext = currentMode.endsWith("DGN") ? "dgn" : "dxf";
-    const blob = new Blob([`Simulated ${ext.toUpperCase()} content`], { type: 'application/octet-stream' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${selectedFile.name.replace(/\.[^/.]+$/, '')}.${ext}`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  const blob = new Blob([csvContent], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${selectedFile.name.replace(/\.[^/.]+$/, '')}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 });
