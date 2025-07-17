@@ -150,7 +150,7 @@ function parseKML(kmlText) {
   });
 
     const preferredOrder = [
-    "POST_CODE", "SUB_DISTRICT", "DISTRICT", "POLE_FAT", "FAT_CODE", "FDT_CODE",
+    "POST_CODE", "SUB_DISTRICT", "DISTRICT", "POLE_FAT", "FDT_CODE", "FAT_CODE",
     "CLUSTER_NAME", "ID_Area", "PREFIX_ADDRESS", "STREET_NAME", "BLOCK", "HOUSE_NUMBER",
     "RT", "RW", "HOME/BIZ", "HOUSE_COMMENT_", "BUILDING_LATITUDE", "BUILDING_LONGITUDE"
   ];
