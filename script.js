@@ -1,3 +1,4 @@
+// --- DOM Elements
 const uploadArea = document.getElementById('upload-area');
 const fileInput = document.getElementById('file-input');
 const uploadText = document.getElementById('upload-text');
@@ -7,6 +8,7 @@ const previewContainer = document.getElementById('preview-table');
 let selectedFile = null;
 let parsedData = null;
 
+// --- Upload Handling
 uploadArea.addEventListener('click', () => fileInput.click());
 uploadArea.addEventListener('dragover', (e) => {
   e.preventDefault();
@@ -20,9 +22,7 @@ uploadArea.addEventListener('drop', (e) => {
   uploadArea.classList.remove('dragover');
   handleFile(e.dataTransfer.files[0]);
 });
-fileInput.addEventListener('change', () => {
-  handleFile(fileInput.files[0]);
-});
+fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
 
 function handleFile(file) {
   if (!file) return;
@@ -39,16 +39,13 @@ function handleFile(file) {
       if (kmlFiles.length === 0) return alert("No KML file found inside KMZ.");
 
       let allKmlTexts = [];
-
       for (const kmlFile of kmlFiles) {
         try {
           const kmlText = await kmlFile.async("text");
           const parser = new DOMParser();
           const xml = parser.parseFromString(kmlText, "text/xml");
           const placemarks = xml.getElementsByTagNameNS("*", "Placemark");
-          if (placemarks.length > 0) {
-            allKmlTexts.push(kmlText);
-          }
+          if (placemarks.length > 0) allKmlTexts.push(kmlText);
         } catch (e) {
           console.warn(`Failed to read ${kmlFile.name}`, e);
         }
@@ -76,15 +73,13 @@ function parseKML(kmlText) {
   const parser = new DOMParser();
   const xml = parser.parseFromString(kmlText, "text/xml");
   const placemarks = xml.getElementsByTagNameNS("*", "Placemark");
-  if (placemarks.length === 0) {
-    alert("No Placemark found in this KML.");
-    return;
-  }
+  if (placemarks.length === 0) return alert("No Placemark found in this KML.");
 
   let rows = [];
   let headersSet = new Set();
   let fatToPoleMap = new Map();
 
+  // Mapping POLE_FAT
   for (let placemark of placemarks) {
     const simpleDataElems = placemark.getElementsByTagNameNS("*", "SimpleData");
     let fatId = '', poleId = '';
@@ -97,6 +92,7 @@ function parseKML(kmlText) {
     if (fatId && poleId) fatToPoleMap.set(fatId, poleId);
   }
 
+  // Extract all rows
   for (let placemark of placemarks) {
     let coordText =
       placemark.getElementsByTagNameNS("http://www.opengis.net/kml/2.2", "coordinates")[0]?.textContent.trim();
@@ -144,27 +140,29 @@ function parseKML(kmlText) {
     rows.push(rowData);
   }
 
-  let headers = Array.from(headersSet).filter(h => h !== "POLE_FAT");
-  const fatIdx = headers.indexOf("FAT_CODE");
-  if (fatIdx !== -1) headers.splice(fatIdx + 1, 0, "POLE_FAT");
-
-  const catIdx = headers.indexOf("Category_BizPass");
-  if (catIdx !== -1) headers.splice(catIdx + 1, 0, "HOME/BIZ");
-  else headers.push("HOME/BIZ");
+  // Reorder headers
+  let headers = Array.from(headersSet).filter(h => !["Name", "Latitude", "Longitude"].includes(h));
+  if (!headers.includes("HOME/BIZ")) headers.push("HOME/BIZ");
 
   rows.forEach(row => {
     const cat = row["Category_BizPass"];
-    if (cat === "RELIGION" || cat === "RESIDENCE") row["HOME/BIZ"] = "H";
-    else if (cat) row["HOME/BIZ"] = "U";
-    else row["HOME/BIZ"] = "";
+    row["HOME/BIZ"] = (cat === "RELIGION" || cat === "RESIDENCE") ? "H" : (cat ? "U" : "");
   });
 
-  headers = headers.filter(h => !["Name", "Latitude", "Longitude"].includes(h));
+    const preferredOrder = [
+    "POST_CODE", "SUB_DISTRICT", "DISTRICT", "POLE_FAT", "FAT_CODE", "FDT_CODE",
+    "CLUSTER_NAME", "ID_Area", "PREFIX_ADDRESS", "STREET_NAME", "BLOCK", "HOUSE_NUMBER",
+    "RT", "RW", "HOME/BIZ", "HOUSE_COMMENT_", "BUILDING_LATITUDE", "BUILDING_LONGITUDE"
+  ];
+
+  const remaining = headers.filter(h => !preferredOrder.includes(h));
+  headers = [...preferredOrder, ...remaining, "Latitude", "Longitude"];
 
   parsedData = { headers, rows };
   showCSVPreview(headers, rows);
 }
 
+// --- CSV Preview
 function showCSVPreview(headers, rows) {
   let html = `<div style="max-height:400px;width:100%;overflow:auto;margin-top:10px"><table style="border-collapse:collapse;width:100%;font-size:0.8rem"><thead><tr>${headers.map(h => `<th style='border:1px solid #ccc;padding:4px;background:#eee'>${h}</th>`).join('')}</tr></thead><tbody>`;
   for (let r of rows) {
@@ -174,6 +172,7 @@ function showCSVPreview(headers, rows) {
   previewContainer.innerHTML = html;
 }
 
+// --- Download CSV
 convertBtn.addEventListener('click', () => {
   if (!selectedFile) return alert("Please upload a file first.");
   if (!parsedData) return alert('No data to convert.');
